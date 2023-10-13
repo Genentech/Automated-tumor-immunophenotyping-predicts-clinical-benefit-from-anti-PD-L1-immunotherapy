@@ -1,0 +1,1527 @@
+---
+title: "Survival analysis -- combining features, POP, OAK, IMP130"
+author: "Xiao Li"
+date: "11/23/2022"
+output: 
+  html_document:
+    toc: yes
+    toc_depth: 2
+    number_sections: TRUE
+    code_folding: hide
+pkgdown:
+  as_is: true
+vignette: >
+  %\VignetteIndexEntry{Risk factors for critical illness}
+  %\VignetteEngine{knitr::rmarkdown}
+  \usepackage[utf8]{inputenc}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, dpi = 100, fig.width = 8, fig.height = 8)
+```
+
+
+# load dependencies
+```{r, warning=F}
+rm(list = ls())
+
+library('uwot')
+library('dplyr')
+select <- dplyr::select
+library('ggplot2')
+library('survival')
+library("survminer")
+library('openxlsx')
+library('caret')
+library('tidyverse')
+library('rpart')
+library('rpart.plot')
+library('randomForest')
+library('e1071')
+library('openxlsx')
+library('pROC')
+
+custom_theme <- function() {
+  theme_survminer() %+replace%
+    theme(
+      plot.title=element_text(hjust=0.5)
+    )
+}
+
+seed = 42
+set.seed(seed)
+
+```
+
+
+
+# Re-train pip2 using rf
+```{r}
+if (file.exists('~/Automated_Immunophenotyping/JPATH/pop_trn_model_pip2_tuneRF.RData')){
+  load('~/Automated_Immunophenotyping/JPATH/pop_trn_model_pip2_tuneRF.RData')
+} else {
+  load("~/Automated_Immunophenotyping/HK_POPLAR_alltiles_100_cutoff=0.25.RData")
+  comb_res = comb_res[, -which(colnames(comb_res) == "ID")[1]]
+  
+  POP_manual = read.csv('~/Automated_Immunophenotyping/POPLAR_with_BCOR.csv')[, c("ID", "immunophenotype")]
+  
+  Xiao_dat = merge(comb_res, POP_manual, by = "ID")
+  
+  Xiao_dat = Xiao_dat[!is.na(Xiao_dat$immunophenotype),]
+  
+  
+  Jeff_POP = read.xlsx('~/Automated_Immunophenotyping/20220211_poplar_bins.xlsx', sheet = 2)
+  Jeff_POP$ID = paste0(Jeff_POP$Sample.ID, '_', Jeff_POP$StarLiMS.ID, '_ckpos_tiles.csv')
+  Jeff_POP = Jeff_POP[, c(35, 16:24, 26:34, 12)]
+  
+  combine_POP = Jeff_POP %>% inner_join(Xiao_dat %>% select(-"immunophenotype"), by = "ID") %>% select(-"ID")
+  
+  ## only on Jeff's features
+  combine_POP_Jeff = combine_POP[, 1:19]
+  
+  
+  #5 folds repeat 10 times
+  control <- trainControl(method = 'repeatedcv', 
+                          number = 5, 
+                          repeats = 3,
+                          search = "grid")
+    
+  #Number randomely variable selected is mtry
+  mtry <- round(sqrt(ncol(combine_POP_Jeff)-1))
+  tunegrid <- expand.grid(mtry = c((mtry-1):(mtry+5)),
+                          min.node.size = c(1:5),
+                          splitrule = "gini")
+  modellist <- list()
+  
+  ntree_candidates <- c(100, 150, 200, 250, 300, 350, 400, 450, 500)
+  for (ntree in ntree_candidates){
+    set.seed(seed)
+    rf_training <- train(Manual_Immunophenotype ~ ., 
+                       data = combine_POP_Jeff, 
+                       method = 'ranger', 
+                       preProcess = NULL,
+                       num.trees = ntree,
+                       tuneGrid = tunegrid, 
+                       trControl = control)
+  
+    key <- toString(ntree)
+    modellist[[key]] <- rf_training
+  }
+  
+  
+  
+  results <- resamples(modellist)
+  summary(results)
+  
+  best_id = which.max(as.data.frame(summary(results)$statistics$Accuracy)$Mean)
+  
+  best_ntree = ntree_candidates[best_id]
+  
+  best_res = modellist[[best_id]]$results
+  
+  set.seed(seed)
+  rf_training <- train(Manual_Immunophenotype ~ ., 
+                       data = combine_POP_Jeff, 
+                       method = 'ranger', 
+                       preProcess = NULL,
+                       num.trees = best_ntree,
+                       tuneGrid = expand.grid(mtry = best_res$mtry[which.max(best_res$Accuracy)],
+                                              min.node.size = best_res$min.node.size[which.max(best_res$Accuracy)], 
+                                              splitrule = best_res$splitrule[which.max(best_res$Accuracy)]),
+                       trControl = trainControl(classProbs = TRUE)
+                       )
+  
+  print(rf_training$results)
+  
+  save(rf_training, file = "~/Automated_Immunophenotyping/JPATH/pop_trn_model_pip2_tuneRF.RData")
+}
+```
+
+
+
+# training using POPLAR dataset
+```{r}
+if (file.exists('~/Automated_Immunophenotyping/JPATH/pop_trn_model_pip3_tuneRF.RData')){
+  load('~/Automated_Immunophenotyping/JPATH/pop_trn_model_pip3_tuneRF.RData')
+} else {
+  load("~/Automated_Immunophenotyping/HK_POPLAR_alltiles_100_cutoff=0.25.RData")
+  comb_res = comb_res[, -which(colnames(comb_res) == "ID")[1]]
+  
+  POP_manual = read.csv('~/Automated_Immunophenotyping/POPLAR_with_BCOR.csv')[, c("ID", "immunophenotype")]
+  
+  Xiao_dat = merge(comb_res, POP_manual, by = "ID")
+  
+  Xiao_dat = Xiao_dat[!is.na(Xiao_dat$immunophenotype),]
+  
+  
+  Jeff_POP = read.xlsx('~/Automated_Immunophenotyping/20220211_poplar_bins.xlsx', sheet = 2)
+  Jeff_POP$ID = paste0(Jeff_POP$Sample.ID, '_', Jeff_POP$StarLiMS.ID, '_ckpos_tiles.csv')
+  Jeff_POP = Jeff_POP[, c(35, 16:24, 26:34, 12)]
+  
+  combine_POP = Jeff_POP %>% inner_join(Xiao_dat %>% select(-"immunophenotype"), by = "ID") %>% select(-"ID")
+  combine_POP = combine_POP[, 19:ncol(combine_POP)]
+  
+  
+  #5 folds repeat 10 times
+  control <- trainControl(method = 'repeatedcv', 
+                          number = 5, 
+                          repeats = 3,
+                          search = "grid")
+    
+  
+  #Number randomely variable selected is mtry
+  mtry <- round(sqrt(ncol(combine_POP)-1))
+  tunegrid <- expand.grid(mtry = c((mtry-1):(mtry+5)),
+                          min.node.size = c(1:5),
+                          splitrule = "gini")
+  modellist <- list()
+  
+  ntree_candidates <- c(100, 150, 200, 250, 300, 350, 400, 450, 500)
+  for (ntree in ntree_candidates){
+    set.seed(seed)
+    rf_training <- train(Manual_Immunophenotype ~ ., 
+                       data = combine_POP, 
+                       method = 'ranger', 
+                       preProcess = NULL,
+                       num.trees = ntree,
+                       tuneGrid = tunegrid, 
+                       trControl = control)
+  
+    key <- toString(ntree)
+    modellist[[key]] <- rf_training
+  }
+  
+  
+  
+  results <- resamples(modellist)
+  summary(results)
+  
+  best_id = which.max(as.data.frame(summary(results)$statistics$Accuracy)$Mean)
+  
+  best_ntree = ntree_candidates[best_id]
+  
+  best_res = modellist[[best_id]]$results
+  
+  set.seed(seed)
+  rf_training <- train(Manual_Immunophenotype ~ ., 
+                       data = combine_POP, 
+                       method = 'ranger', 
+                       preProcess = NULL,
+                       num.trees = best_ntree,
+                       tuneGrid = expand.grid(mtry = best_res$mtry[which.max(best_res$Accuracy)],
+                                              min.node.size = best_res$min.node.size[which.max(best_res$Accuracy)], 
+                                              splitrule = best_res$splitrule[which.max(best_res$Accuracy)]),
+                       trControl = trainControl(classProbs = TRUE)
+                       )
+  
+  print(rf_training$results)
+  
+  save(rf_training, file = "~/Automated_Immunophenotyping/JPATH/pop_trn_model_pip3_tuneRF.RData")
+  
+}
+
+
+
+# rfImp = varImp(rf_training, scale = F)
+# plot(rfImp, top = 20) 
+
+
+```
+
+
+
+### evaluation metrics
+```{r}
+
+multi_class_metrics <- function(pred, y_true){
+  
+                        y_pred = factor(c("Desert", "Excluded", "Inflamed")[apply(pred, 1, which.max)], levels = c("Inflamed", "Excluded", "Desert"))
+                        cm <- as.matrix(confusionMatrix(y_pred, y_true))
+                        n = sum(cm) # number of instances
+                        nc = nrow(cm) # number of classes
+                        rowsums = apply(cm, 1, sum) # number of instances per class
+                        colsums = apply(cm, 2, sum) # number of predictions per class
+                        diag = diag(cm)  # number of correctly classified instances per class 
+
+                        precision = diag / colsums 
+                        recall = diag / rowsums 
+                        f1 = 2 * precision * recall / (precision + recall) 
+                        
+                        print(" ************ Confusion Matrix ************")
+                        print(cm)
+                        print(" ************ Diag ************")
+                        print(diag)
+                        print(" ************ Precision/Recall/F1 ************")
+                        print(data.frame(precision, recall, f1)) 
+                        
+                        macroPrecision = mean(precision)
+                        macroRecall = mean(recall)
+                        macroF1 = mean(f1)
+                        
+                        print(" ************ Macro Precision/Recall/F1 ************")
+                        print(data.frame(macroPrecision, macroRecall, macroF1)) 
+
+                        
+                        print(" ************ AUC ************")
+                        roc.multi <- multiclass.roc(response = y_true, predictor = pred[, c(3,2,1)], plot = FALSE, quiet = TRUE)
+                        print(auc(roc.multi))
+                        
+                      }
+
+
+```
+
+
+
+# harmonize different data source for OAK, we include the subject with multiple sample but concordant IP calls
+```{r, warning = F}
+load("~/Automated_Immunophenotyping/HK_OAK_alltiles_100_cutoff=0.25.RData")
+Xiao_OAK = comb_res[, -which(colnames(comb_res) == "ID")[1]]
+
+Jeff_OAK = readxl::read_excel('~/Automated_Immunophenotyping/COLLATE_OAK_HK_final_20220606153656.xlsx', sheet = 1, col_types = c(rep("text", 10), rep("numeric", 27))) %>% mutate(Final.call = `Final consensus manual phenotype`)
+
+Jeff_OAK$ID = paste0(Jeff_OAK$Sample.ID, '_', Jeff_OAK$StarLiMS.ID, '_ckpos_tiles.csv')
+
+Hauke_dat = read.csv('~/Automated_Immunophenotyping/Patient-MetaData_GO28915_OAK_v070_2112120_for-Darya - PatientDataTable_GO28915_OAK_new_210828.csv')
+
+combine_OAK = Xiao_OAK %>% inner_join(Jeff_OAK[, c(4,2,3, 18:39)], by = "ID") %>%
+                inner_join(Hauke_dat %>% select(USUBJID, ACTARM, OS_MONTHS, OS_CENSOR, PFS_MONTHS, PFS_CENSOR), by = "USUBJID")  %>% 
+                mutate(Final.call = factor(Final.call, levels = c("Inflamed", "Excluded", "Desert")))
+
+
+fea = names(rf_training$trainingData)[-which(names(rf_training$trainingData) == ".outcome")]
+
+names(combine_OAK)[55:74] = gsub(" ", ".", names(combine_OAK)[55:74])
+
+combine_OAK = combine_OAK[complete.cases(combine_OAK), ] %>% unique()
+```
+
+
+
+```{r}
+## replace SVM results with the RF_pip2 prediction
+load('~/Automated_Immunophenotyping/JPATH/pop_trn_model_pip2_tuneRF.RData')
+
+fea = names(rf_training$trainingData)[-which(names(rf_training$trainingData) == ".outcome")]
+
+pred <- predict(rf_training, 
+                combine_OAK[, fea], 
+                type = "prob")
+
+combine_OAK$SVM = factor(c("Desert", "Excluded", "Inflamed")[apply(pred, 1, which.max)], levels = c("Inflamed", "Excluded", "Desert"))
+
+
+xtab = table(factor(c("Desert", "Excluded", "Inflamed")[apply(pred, 1, which.max)], levels = c("Inflamed", "Excluded", "Desert"))
+, combine_OAK$Final.call)
+
+print(paste0("Classification accuracy is ", sum(diag(xtab))/sum(xtab)))
+
+multi_class_metrics(pred = pred,
+                    y_true = combine_OAK$Final.call)
+
+
+```
+
+
+
+
+# prediction on OAK (combing arms)
+```{r}
+load('~/Automated_Immunophenotyping/JPATH/pop_trn_model_pip3_tuneRF.RData')
+
+fea = names(rf_training$trainingData)[-which(names(rf_training$trainingData) == ".outcome")]
+
+
+pred <- predict(rf_training, 
+                combine_OAK[, fea], 
+                type = "prob")
+
+
+combine_OAK$spat = factor(c("Desert", "Excluded", "Inflamed")[apply(pred, 1, which.max)], levels = c("Inflamed", "Excluded", "Desert"))
+
+
+
+xtab = table(factor(c("Desert", "Excluded", "Inflamed")[apply(pred, 1, which.max)], levels = c("Inflamed", "Excluded", "Desert"))
+, combine_OAK$Final.call)
+
+print(paste0("Classification accuracy is ", sum(diag(xtab))/sum(xtab)))
+
+vcd::Kappa(xtab)
+xtab
+
+
+multi_class_metrics(pred = pred,
+                    y_true = combine_OAK$Final.call)
+```
+
+
+```{r}
+## the generic plotting function
+
+surv_plot <- function(fit_obj = fit_combined, data = A_dat, data2 = rbind(A_dat, D_dat), time = "OS_MONTHS", cen = "OS_CENSOR", method = "combined", title = "OS for Atezolizumab by \nMOCHA-BITE method", 
+                      hjust1 = 0, hjust2 = -0.2, hjust3 = 1){
+  
+  p_combined_A_OS = ggsurvplot(fit_obj, data = data, palette = COLOR, 
+                               size = 0.4, 
+                               censor.size = 2.5,
+                               font.main = c(9, "bold"), 
+                               legend.title = "Immunophenotyping",
+                               legend.labs = c("Inflamed", "Excluded", "Desert"),
+                               font.legend = 7,
+                               conf.int = F,          # Add confidence interval
+                               pval = FALSE,              # Add p-value
+                               risk.table = TRUE,  
+                               risk.table.fontsize = 2.5,
+                               title = title, 
+                               ggtheme=custom_theme(),
+                               font.x = 8,
+                               font.y = 8,
+                               font.tickslab = 6,
+                               surv.median.line = "hv", 
+                               tables.theme = theme_cleantable(), 
+                               axes.offset = F, 
+                               xlim = c(0, ceiling(max(data2[[time]]))))
+
+  p_combined_A_OS$table <- p_combined_A_OS$table +
+                              theme(plot.title = element_text(size = 9, face = "bold"))
+  p_combined_A_OS$table$theme$axis.text.y$size = 8
+
+  p_val = survdiff(as.formula(paste0("Surv(", time, "," , cen, ") ~ " , method)), data = data)
+  p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+  
+  med_time = surv_median(fit_obj)[,2]
+  
+  p_combined_A_OS$plot <- p_combined_A_OS$plot +
+    annotate("text", size = 3, x = 0.8*max(data[[time]]), y = 0.6, label = paste0("p=", p_val), cex=5, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+    annotate("text", size = 3, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=5, col=COLOR[1], vjust=0, hjust = hjust1, fontface=1) + 
+    annotate("text", size = 3, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=5, col=COLOR[2], vjust=0, hjust = hjust2, fontface=1) + 
+    annotate("text", size = 3, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=5, col=COLOR[3], vjust=0, hjust = hjust3, fontface=1)
+  
+  return(p_combined_A_OS)
+  
+}
+
+```
+
+
+# OS Survival analysis (OAK)
+```{r}
+COLOR <- c("#ED7D31", "#4472C4", "#A5A5A5")
+
+combine_OAK$cutoff = factor(combine_OAK$`Cutoff prediction`, levels = c("Inflamed", "Excluded", "Desert"))
+
+A_dat = combine_OAK %>% filter(ACTARM == "atezo")
+D_dat = combine_OAK %>% filter(ACTARM == "doce") 
+
+pip1_3_pred_OAK = data.frame("ID" = combine_OAK %>% select(ID), "ACTARM" = combine_OAK$ACTARM, "MOCHA" = combine_OAK$spat, "cutoff" = combine_OAK$cutoff, "SVM" = combine_OAK$SVM, 
+                             "OS" = combine_OAK$OS_MONTHS, "OS_event" = combine_OAK$OS_CENSOR, "PFS" = combine_OAK$PFS_MONTHS, "PFS_event" = combine_OAK$PFS_CENSOR)
+
+write.csv(pip1_3_pred_OAK, '~/Automated_Immunophenotyping/JPATH/pip1_3_pred_OAK.csv', row.names = F)
+```
+
+
+```{r}
+#######################################################################################################
+########################        OS for cut-off, SVM, MOCHA and Manuals       ########################
+#######################################################################################################
+
+## Atezo arm
+
+fit_spat <- survfit(Surv(OS_MONTHS, OS_CENSOR) ~ spat, data = A_dat)
+fit_manual <- survfit(Surv(OS_MONTHS, OS_CENSOR) ~ Final.call, data = A_dat)
+fit_cutoff <- survfit(Surv(OS_MONTHS, OS_CENSOR) ~ cutoff, data = A_dat)
+fit_SVM <- survfit(Surv(OS_MONTHS, OS_CENSOR) ~ SVM, data = A_dat)
+
+
+p_spat_A_OS = surv_plot(fit_spat, data = A_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "spat", title = "OS for Atezolizumab by \nMOCHA method",
+                            hjust1 = -1, hjust2 = -0.2, hjust3 = 1.5)
+# p_spat_A_OS = ggsurvplot(fit_spat, data = A_dat, palette = COLOR, size = 2, 
+#                          font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                          legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                          conf.int = F,          # Add confidence interval
+#                          pval = FALSE,              # Add p-value
+#                          risk.table = TRUE,  title = "OS for Atezolizumab by MOCHA method", ggtheme=custom_theme(),
+#                          surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(OS_MONTHS, OS_CENSOR) ~ spat, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_spat)[,2]
+# 
+# p_spat_A_OS$plot <- p_spat_A_OS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.95, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 1.8, fontface=1)
+# 
+# print(p_spat_A_OS)
+
+
+
+p_manual_A_OS = surv_plot(fit_manual, data = A_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "Final.call", title = "OS for Atezolizumab by \nManual method",
+                            hjust1 = -1, hjust2 = -0.2, hjust3 = 1.5)
+# p_manual_A_OS = ggsurvplot(fit_manual, data = A_dat, palette = COLOR, size = 2, 
+#                            font.main = c(16, "bold"), legend.title = "Immunophenotyping", 
+#                            legend.labs = c("Inflamed", "Excluded", "Desert"), 
+#                            conf.int = F,          # Add confidence interval
+#                            pval = FALSE,              # Add p-value
+#                            risk.table = TRUE,  title = "OS for Atezolizumab by Manual method", ggtheme=custom_theme(),
+#                            surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(OS_MONTHS, OS_CENSOR) ~ Final.call, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_manual)[,2]
+# 
+# p_manual_A_OS$plot <- p_manual_A_OS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.95, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 1.8, fontface=1)
+# 
+# print(p_manual_A_OS)
+
+
+
+p_cutoff_A_OS = surv_plot(fit_cutoff, data = A_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "cutoff", title = "OS for Atezolizumab by \nDensity cut-off method",
+                            hjust1 = -1, hjust2 = -0.2, hjust3 = 1.5)
+# p_cutoff_A_OS = ggsurvplot(fit_cutoff, data = A_dat, palette = COLOR, size = 2, 
+#                            font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                            legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                            conf.int = F,          # Add confidence interval
+#                            pval = FALSE,              # Add p-value
+#                            risk.table = TRUE,  title = "OS for Atezolizumab by Density cut-off method", ggtheme=custom_theme(),
+#                            surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(OS_MONTHS, OS_CENSOR) ~ cutoff, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_cutoff)[,2]
+# 
+# p_cutoff_A_OS$plot <- p_cutoff_A_OS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.95, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 1.5, fontface=1)
+# 
+# print(p_cutoff_A_OS)
+
+
+
+
+p_SVM_A_OS = surv_plot(fit_SVM, data = A_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "SVM", title = "OS for Atezolizumab by \nBinned CD8 density method",
+                            hjust1 = -1, hjust2 = -0.2, hjust3 = 1.5)
+# p_SVM_A_OS = ggsurvplot(fit_SVM, data = A_dat, palette = COLOR, size = 2, 
+#                         font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                         legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                         conf.int = F,          # Add confidence interval
+#                         pval = FALSE,              # Add p-value
+#                         risk.table = TRUE,  title = "OS for Atezolizumab by Binned CD8 density method", ggtheme=custom_theme(),
+#                         surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(OS_MONTHS, OS_CENSOR) ~ SVM, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_spat)[,2]
+# 
+# p_SVM_A_OS$plot <- p_SVM_A_OS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.95, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 1.8, fontface=1)
+# 
+# print(p_SVM_A_OS)
+
+
+
+
+
+
+## Doce arm
+
+fit_spat <- survfit(Surv(OS_MONTHS, OS_CENSOR) ~ spat, data = D_dat)
+fit_manual <- survfit(Surv(OS_MONTHS, OS_CENSOR) ~ Final.call, data = D_dat)
+fit_cutoff <- survfit(Surv(OS_MONTHS, OS_CENSOR) ~ cutoff, data = D_dat)
+fit_SVM <- survfit(Surv(OS_MONTHS, OS_CENSOR) ~ SVM, data = D_dat)
+
+
+p_spat_D_OS = surv_plot(fit_spat, data = D_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "spat", title = "OS for Docetaxel by \nMOCHA method",
+                            hjust1 = -1, hjust2 = -2, hjust3 = 1.5)
+# p_spat_D_OS = ggsurvplot(fit_spat, data = D_dat, palette = COLOR, size = 2, 
+#                          font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                          legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                          conf.int = F,          # Add confidence interval
+#                          pval = FALSE,              # Add p-value
+#                          risk.table = TRUE,  title = "OS for Docetaxel by MOCHA method", ggtheme=custom_theme(),
+#                          surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(OS_MONTHS, OS_CENSOR) ~ spat, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_spat)[,2]
+# 
+# p_spat_D_OS$plot <- p_spat_D_OS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.95, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 1.8, fontface=1)
+# 
+# print(p_spat_D_OS)
+
+
+
+p_manual_D_OS = surv_plot(fit_manual, data = D_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "Final.call", title = "OS for Docetaxel by \nManual method",
+                            hjust1 = 0, hjust2 = -1, hjust3 = 1.8)
+# p_manual_D_OS = ggsurvplot(fit_manual, data = D_dat, palette = COLOR, size = 2, 
+#                            font.main = c(16, "bold"), legend.title = "Immunophenotyping", 
+#                            legend.labs = c("Inflamed", "Excluded", "Desert"), 
+#                            conf.int = F,          # Add confidence interval
+#                            pval = FALSE,              # Add p-value
+#                            risk.table = TRUE,  title = "OS for Docetaxel by Manual method", ggtheme=custom_theme(),
+#                            surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(OS_MONTHS, OS_CENSOR) ~ Final.call, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_manual)[,2]
+# 
+# p_manual_D_OS$plot <- p_manual_D_OS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.95, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 1.8, fontface=1)
+# 
+# print(p_manual_D_OS)
+
+
+
+p_cutoff_D_OS = surv_plot(fit_cutoff, data = D_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "cutoff", title = "OS for Docetaxel by \nDensity cut-off method",
+                            hjust1 = 0, hjust2 = -1, hjust3 = 1.8)
+# p_cutoff_D_OS = ggsurvplot(fit_cutoff, data = D_dat, palette = COLOR, size = 2, 
+#                            font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                            legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                            conf.int = F,          # Add confidence interval
+#                            pval = FALSE,              # Add p-value
+#                            risk.table = TRUE,  title = "OS for Docetaxel by Density cut-off method", ggtheme=custom_theme(),
+#                            surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(OS_MONTHS, OS_CENSOR) ~ cutoff, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_cutoff)[,2]
+# 
+# p_cutoff_D_OS$plot <- p_cutoff_D_OS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.95, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 1.5, fontface=1)
+# 
+# print(p_cutoff_D_OS)
+
+
+
+p_SVM_D_OS = surv_plot(fit_SVM, data = D_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "SVM", title = "OS for Docetaxel by \nBinned CD8 density method",
+                            hjust1 = -1, hjust2 = 0, hjust3 = 1.8)
+# p_SVM_D_OS = ggsurvplot(fit_SVM, data = D_dat, palette = COLOR, size = 2, 
+#                         font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                         legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                         conf.int = F,          # Add confidence interval
+#                         pval = FALSE,              # Add p-value
+#                         risk.table = TRUE,  title = "OS for Docetaxel by Binned CD8 density method", ggtheme=custom_theme(),
+#                         surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(OS_MONTHS, OS_CENSOR) ~ SVM, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_SVM)[,2]
+# 
+# p_SVM_D_OS$plot <- p_SVM_D_OS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.95, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 1.8, fontface=1)
+# 
+# print(p_SVM_D_OS)
+
+
+
+```
+
+
+
+# PFS Survival analysis (OAK)
+```{r}
+
+#######################################################################################################
+########################        PFS for cut-off, LATIS and Manuals       ########################
+#######################################################################################################
+
+## Atezo arm
+
+fit_spat <- survfit(Surv(PFS_MONTHS, PFS_CENSOR) ~ spat, data = A_dat)
+fit_manual <- survfit(Surv(PFS_MONTHS, PFS_CENSOR) ~ Final.call, data = A_dat)
+fit_cutoff <- survfit(Surv(PFS_MONTHS, PFS_CENSOR) ~ cutoff, data = A_dat)
+fit_SVM <- survfit(Surv(PFS_MONTHS, PFS_CENSOR) ~ SVM, data = A_dat)
+
+
+p_spat_A_PFS = surv_plot(fit_spat, data = A_dat, time = "PFS_MONTHS", cen = "PFS_CENSOR", method = "spat", title = "PFS for Atezolizumab by \nMOCHA method",
+                            hjust1 = -4, hjust2 = -1.5, hjust3 = 0)
+# p_spat_A_PFS = ggsurvplot(fit_spat, data = A_dat, palette = COLOR, size = 2, 
+#                           font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                           legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                           conf.int = F,          # Add confidence interval
+#                           pval = FALSE,              # Add p-value
+#                           risk.table = TRUE,  title = "PFS for Atezolizumab by MOCHA method", ggtheme=custom_theme(),
+#                           surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(PFS_MONTHS, PFS_CENSOR) ~ spat, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_spat)[,2]
+# 
+# p_spat_A_PFS$plot <- p_spat_A_PFS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 1.5, fontface=1)
+# 
+# print(p_spat_A_PFS)
+
+
+
+p_manual_A_PFS = surv_plot(fit_manual, data = A_dat, time = "PFS_MONTHS", cen = "PFS_CENSOR", method = "Final.call", title = "PFS for Atezolizumab by \nManual method",
+                            hjust1 = -6, hjust2 = -1.5, hjust3 = 0)
+# p_manual_A_PFS = ggsurvplot(fit_manual, data = A_dat, palette = COLOR, size = 2, 
+#                             font.main = c(16, "bold"), legend.title = "Immunophenotyping", 
+#                             legend.labs = c("Inflamed", "Excluded", "Desert"), 
+#                             conf.int = F,          # Add confidence interval
+#                             pval = FALSE,              # Add p-value
+#                             risk.table = TRUE,  title = "PFS for Atezolizumab by Manual method", ggtheme=custom_theme(),
+#                             surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(PFS_MONTHS, PFS_CENSOR) ~ Final.call, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_manual)[,2]
+# 
+# p_manual_A_PFS$plot <- p_manual_A_PFS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 1.5, fontface=1)
+# 
+# print(p_manual_A_PFS)
+
+
+
+p_cutoff_A_PFS = surv_plot(fit_cutoff, data = A_dat, time = "PFS_MONTHS", cen = "PFS_CENSOR", method = "cutoff", title = "PFS for Atezolizumab by \nDensity cut-off method",
+                            hjust1 = -4, hjust2 = -1.5, hjust3 = 0)
+# p_cutoff_A_PFS = ggsurvplot(fit_cutoff, data = A_dat, palette = COLOR, size = 2, 
+#                             font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                             legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                             conf.int = F,          # Add confidence interval
+#                             pval = FALSE,              # Add p-value
+#                             risk.table = TRUE,  title = "PFS for Atezolizumab by Density cut-off method", ggtheme=custom_theme(),
+#                             surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(PFS_MONTHS, PFS_CENSOR) ~ cutoff, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_cutoff)[,2]
+# 
+# p_cutoff_A_PFS$plot <- p_cutoff_A_PFS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 1.5, fontface=1)
+# 
+# print(p_cutoff_A_PFS)
+
+
+
+
+p_SVM_A_PFS = surv_plot(fit_SVM, data = A_dat, time = "PFS_MONTHS", cen = "PFS_CENSOR", method = "SVM", title = "PFS for Atezolizumab by \nBinned CD8 density method",
+                            hjust1 = -4, hjust2 = -1.5, hjust3 = 0)
+# p_SVM_A_PFS = ggsurvplot(fit_SVM, data = A_dat, palette = COLOR, size = 2, 
+#                          font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                          legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                          conf.int = F,          # Add confidence interval
+#                          pval = FALSE,              # Add p-value
+#                          risk.table = TRUE,  title = "PFS for Atezolizumab by Binned CD8 density method", ggtheme=custom_theme(),
+#                          surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(PFS_MONTHS, PFS_CENSOR) ~ SVM, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_spat)[,2]
+# 
+# p_SVM_A_PFS$plot <- p_SVM_A_PFS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 1.5, fontface=1)
+# 
+# print(p_SVM_A_PFS)
+
+
+
+
+
+## Doce arm
+
+fit_spat <- survfit(Surv(PFS_MONTHS, PFS_CENSOR) ~ spat, data = D_dat)
+fit_manual <- survfit(Surv(PFS_MONTHS, PFS_CENSOR) ~ Final.call, data = D_dat)
+fit_cutoff <- survfit(Surv(PFS_MONTHS, PFS_CENSOR) ~ cutoff, data = D_dat)
+fit_SVM <- survfit(Surv(PFS_MONTHS, PFS_CENSOR) ~ SVM, data = D_dat)
+
+
+p_spat_D_PFS = surv_plot(fit_spat, data = D_dat, time = "PFS_MONTHS", cen = "PFS_CENSOR", method = "spat", title = "PFS for Docetaxel by \nMOCHA method",
+                            hjust1 = -4, hjust2 = -2, hjust3 = 0)
+# p_spat_D_PFS = ggsurvplot(fit_spat, data = D_dat, palette = COLOR, size = 2, 
+#                           font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                           legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                           conf.int = F,          # Add confidence interval
+#                           pval = FALSE,              # Add p-value
+#                           risk.table = TRUE,  title = "PFS for Docetaxel by MOCHA method", ggtheme=custom_theme(),
+#                           surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(PFS_MONTHS, PFS_CENSOR) ~ spat, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_spat)[,2]
+# 
+# p_spat_D_PFS$plot <- p_spat_D_PFS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 2, fontface=1)
+# 
+# print(p_spat_D_PFS)
+
+
+
+p_manual_D_PFS = surv_plot(fit_manual, data = D_dat, time = "PFS_MONTHS", cen = "PFS_CENSOR", method = "Final.call", title = "PFS for Docetaxel by \nManual method",
+                            hjust1 = -4, hjust2 = -2, hjust3 = 0)
+# p_manual_D_PFS = ggsurvplot(fit_manual, data = D_dat, palette = COLOR, size = 2, 
+#                             font.main = c(16, "bold"), legend.title = "Immunophenotyping", 
+#                             legend.labs = c("Inflamed", "Excluded", "Desert"), 
+#                             conf.int = F,          # Add confidence interval
+#                             pval = FALSE,              # Add p-value
+#                             risk.table = TRUE,  title = "PFS for Docetaxel by Manual method", ggtheme=custom_theme(),
+#                             surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(PFS_MONTHS, PFS_CENSOR) ~ Final.call, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_manual)[,2]
+# 
+# p_manual_D_PFS$plot <- p_manual_D_PFS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 2, fontface=1)
+# 
+# print(p_manual_D_PFS)
+
+
+
+p_cutoff_D_PFS = surv_plot(fit_cutoff, data = D_dat, time = "PFS_MONTHS", cen = "PFS_CENSOR", method = "cutoff", title = "PFS for Docetaxel by \nDensity cut-off method",
+                            hjust1 = -4, hjust2 = -2, hjust3 = 0)
+# p_cutoff_D_PFS = ggsurvplot(fit_cutoff, data = D_dat, palette = COLOR, size = 2, 
+#                             font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                             legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                             conf.int = F,          # Add confidence interval
+#                             pval = FALSE,              # Add p-value
+#                             risk.table = TRUE,  title = "PFS for Docetaxel by Density cut-off method", ggtheme=custom_theme(),
+#                             surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(PFS_MONTHS, PFS_CENSOR) ~ cutoff, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_cutoff)[,2]
+# 
+# p_cutoff_D_PFS$plot <- p_cutoff_D_PFS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 2, fontface=1)
+# 
+# print(p_cutoff_D_PFS)
+
+
+
+p_SVM_D_PFS = surv_plot(fit_SVM, data = D_dat, time = "PFS_MONTHS", cen = "PFS_CENSOR", method = "SVM", title = "PFS for Docetaxel by \nBinned CD8 density method",
+                            hjust1 = -4, hjust2 = -2, hjust3 = 0)
+# p_SVM_D_PFS = ggsurvplot(fit_SVM, data = D_dat, palette = COLOR, size = 2, 
+#                          font.main = c(16, "bold"), legend.title = "Immunophenotyping", 
+#                          legend.labs = c("Inflamed", "Excluded", "Desert"), 
+#                          conf.int = F,          # Add confidence interval
+#                          pval = FALSE,              # Add p-value
+#                          risk.table = TRUE,  title = "PFS for Docetaxel by Binned CD8 density method", ggtheme=custom_theme(),
+#                          surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(PFS_MONTHS, PFS_CENSOR) ~ SVM, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_SVM)[,2]
+# 
+# p_SVM_D_PFS$plot <- p_SVM_D_PFS$plot +
+#   annotate("text", size = 5, x = 28, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 2, fontface=1)
+# 
+# print(p_SVM_D_PFS)
+
+
+
+
+```
+
+
+```{r}
+
+splots <- list()
+splots[[1]] <- p_cutoff_A_OS
+splots[[2]] <- p_SVM_A_OS
+splots[[3]] <- p_spat_A_OS
+splots[[4]] <- p_manual_A_OS
+splots[[5]] <- p_cutoff_D_OS
+splots[[6]] <- p_SVM_D_OS
+splots[[7]] <- p_spat_D_OS
+splots[[8]] <- p_manual_D_OS
+
+
+
+splots[[9]] <- p_cutoff_A_PFS
+splots[[10]] <- p_SVM_A_PFS
+splots[[11]] <- p_spat_A_PFS
+splots[[12]] <- p_manual_A_PFS
+splots[[13]] <- p_cutoff_D_PFS
+splots[[14]] <- p_SVM_D_PFS
+splots[[15]] <- p_spat_D_PFS
+splots[[16]] <- p_manual_D_PFS
+
+
+
+png("~/Automated_Immunophenotyping/JPATH/OS_comp_new_preferred_OAK_pip1-3.png", width = 4500, height = 2200, res = 300)
+# Arrange multiple ggsurvplots and print the output
+arrange_ggsurvplots(list(splots[[1]], splots[[5]], splots[[2]], splots[[6]],
+                         splots[[3]], splots[[7]], splots[[4]], splots[[8]]), 
+                    print = TRUE, ncol = 4, nrow = 2, risk.table.height = 0.2)
+dev.off()
+
+
+png("~/Automated_Immunophenotyping/JPATH/PFS_comp_new_preferred_OAK_pip1-3.png", width = 4500, height = 2200, res = 300)
+# Arrange multiple ggsurvplots and print the output
+arrange_ggsurvplots(list(splots[[9]], splots[[13]], splots[[10]], splots[[14]],
+                         splots[[11]], splots[[15]], splots[[12]], splots[[16]]), 
+                    print = TRUE, ncol = 4, nrow = 2, risk.table.height = 0.2)
+dev.off()
+
+
+```
+
+
+
+
+
+
+# prediction on IMPassion130 (combing arms)
+```{r, warning=FALSE}
+Jeff_IMP130 = readxl::read_xlsx('~/Automated_Immunophenotyping/20221002_IMP130_tracker.xlsx', sheet = 1, col_types = c(rep("text", 12), rep("numeric", 27))) %>% mutate(Final.call = factor(Immunophenotype_HK, levels = c("Inflamed", "Excluded", "Desert")))
+Jeff_IMP130 = Jeff_IMP130[-c(1:8, 10, 11, 14, 16, 17), ]
+Jeff_IMP130$ID = paste0(Jeff_IMP130$Block, '_', as.numeric(Jeff_IMP130$`Patient Number`), '_ckpos_tiles.csv')
+Jeff_IMP130 = Jeff_IMP130[, c(21:29, 31:39, 40, 41)]; names(Jeff_IMP130)[1:18] = gsub(" ", ".", names(Jeff_IMP130)[1:18])
+
+Xiao_IMP130 = read.csv('~/Automated_Immunophenotyping/IMPassion130_res.csv'); Xiao_IMP130 = Xiao_IMP130[, -which(colnames(Xiao_IMP130) == "ID.1")[1]]
+
+# Jeff_IMP130$ID[!(Jeff_IMP130$ID %in% Xiao_IMP130$ID)] 
+# "HP-208267_1175_ckpos_tiles.csv" "HP-208290_1209_ckpos_tiles.csv" "HP-208637_1517_ckpos_tiles.csv" 
+# these 3 files are either short of pos tiles or neg tiles
+
+combine_IMP130 = merge(Jeff_IMP130, Xiao_IMP130, by = "ID")
+combine_IMP130 = combine_IMP130[complete.cases(combine_IMP130),]
+
+
+
+tmp = read.csv('~/Automated_Immunophenotyping/20221130_IMP130_tracker_ANON.csv') %>% 
+  mutate(Final.call = factor(Immunophenotype_HK, levels = c("Inflamed", "Excluded", "Desert")))
+tmp = tmp[, c(1:4, 15:23, 25:33, 34)]
+colnames(tmp)[5:22] = gsub("X", "", colnames(tmp)[5:22])
+colnames(tmp)[5:22] = gsub("bin...", "bin./.", colnames(tmp)[5:22])
+
+tmp1 = tmp %>% select(uni_id = hashed.uniId, HK_block = 'Specimen.._HK', SVM = SVM_prediction, cutoff = Slide_Cutoff_prediction)
+
+tmp2 = read.csv('~/Automated_Immunophenotyping/wo29522_clin_jea_hk_10022022.csv')
+
+tmp3 = merge(tmp1, tmp2, by = "uni_id")
+
+
+dat_IMP130 = merge(combine_IMP130 %>% mutate(HK_block = substr(ID, 1, 9)), 
+                   tmp3, 
+                   by = "HK_block") %>% unique()
+
+
+load('~/Automated_Immunophenotyping/JPATH/pop_trn_model_pip3_tuneRF.RData')
+
+fea = names(rf_training$trainingData)[-which(names(rf_training$trainingData) == ".outcome")]
+
+
+pred <- predict(rf_training, 
+                dat_IMP130[, fea], 
+                type = "prob")
+
+xtab = table(factor(c("Desert", "Excluded", "Inflamed")[apply(pred, 1, which.max)], levels = c("Inflamed", "Excluded", "Desert"))
+             , dat_IMP130$Final.call)
+
+print(paste0("Classification accuracy is ", sum(diag(xtab))/sum(xtab)))
+
+vcd::Kappa(xtab)
+xtab
+
+multi_class_metrics(pred = pred,
+                    y_true = dat_IMP130$Final.call)
+
+dat_IMP130$spat = factor(factor(c("Desert", "Excluded", "Inflamed")[apply(pred, 1, which.max)], levels = c("Inflamed", "Excluded", "Desert")), levels = c("Inflamed", "Excluded", "Desert"))
+
+
+
+## replace SVM results with the RF_pip2 prediction
+load('~/Automated_Immunophenotyping/JPATH/pop_trn_model_pip2_tuneRF.RData')
+
+fea = names(rf_training$trainingData)[-which(names(rf_training$trainingData) == ".outcome")]
+
+pred <- predict(rf_training, 
+                dat_IMP130[, fea], 
+                type = "prob")
+
+xtab = table(factor(c("Desert", "Excluded", "Inflamed")[apply(pred, 1, which.max)], levels = c("Inflamed", "Excluded", "Desert"))
+             , dat_IMP130$Final.call)
+
+print(paste0("Classification accuracy is ", sum(diag(xtab))/sum(xtab)))
+
+vcd::Kappa(xtab)
+xtab
+
+multi_class_metrics(pred = pred,
+                    y_true = dat_IMP130$Final.call)
+
+
+dat_IMP130$SVM = factor(factor(c("Desert", "Excluded", "Inflamed")[apply(pred, 1, which.max)], levels = c("Inflamed", "Excluded", "Desert")), levels = c("Inflamed", "Excluded", "Desert"))
+
+dat_IMP130$cutoff = factor(dat_IMP130$cutoff, levels = c("Inflamed", "Excluded", "Desert"))
+
+
+pip1_3_pred_IMP130 = data.frame("ID" = dat_IMP130 %>% select(ID), "ACTARM" = dat_IMP130$arm, "MOCHA" = dat_IMP130$spat, "cutoff" = dat_IMP130$cutoff, "SVM" = dat_IMP130$SVM, 
+                             "OS" = dat_IMP130$os_months, "OS_event" = 1-dat_IMP130$os_cnsr, "PFS" = dat_IMP130$pfs_months, "PFS_event" = 1-dat_IMP130$pfs_cnsr)
+
+write.csv(pip1_3_pred_IMP130, '~/Automated_Immunophenotyping/JPATH/pip1_3_pred_IMP130.csv', row.names = F)
+```
+
+
+
+
+# OS Survival analysis (IMPassion130)
+```{r}
+COLOR <- c("#ED7D31", "#4472C4", "#A5A5A5")
+
+
+
+A_dat = dat_IMP130 %>% filter(arm == "MPDL3280A")
+D_dat = dat_IMP130 %>% filter(arm == "PLACEBO")
+#######################################################################################################
+########################            OS for spat and Manuals         ########################
+#######################################################################################################
+
+## Atezo arm
+fit_spat <- survfit(Surv(os_months, 1-os_cnsr) ~ spat, data = A_dat)
+fit_manual <- survfit(Surv(os_months, 1-os_cnsr) ~ Final.call, data = A_dat)
+fit_cutoff <- survfit(Surv(os_months, 1-os_cnsr) ~ cutoff, data = A_dat)
+fit_SVM <- survfit(Surv(os_months, 1-os_cnsr) ~ SVM, data = A_dat)
+
+
+p_spat_A_OS = surv_plot(fit_spat, data = A_dat, time = "os_months", cen = "1-os_cnsr", method = "spat", title = "OS for Atezolizumab by \nMOCHA method",
+                            hjust1 = -2, hjust2 = -0.5, hjust3 = 0)
+# p_spat_A_OS = ggsurvplot(fit_spat, data = A_dat, palette = COLOR, size = 2, 
+#                          font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                          legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                          conf.int = F,          # Add confidence interval
+#                          pval = FALSE,              # Add p-value
+#                          risk.table = TRUE,  title = "OS for Atezolizumab by MOCHA method", ggtheme=custom_theme(),
+#                          surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(os_months, 1-os_cnsr) ~ spat, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_spat)[,2]
+# 
+# p_spat_A_OS$plot <- p_spat_A_OS$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 3, fontface=1)
+# 
+# print(p_spat_A_OS)
+
+
+
+p_manual_A_OS = surv_plot(fit_manual, data = A_dat, time = "os_months", cen = "1-os_cnsr", method = "Final.call", title = "OS for Atezolizumab by \nManual method",
+                            hjust1 = -2, hjust2 = -0.5, hjust3 = 0)
+# p_manual_A_OS = ggsurvplot(fit_manual, data = A_dat, palette = COLOR, size = 2, 
+#                            font.main = c(16, "bold"), legend.title = "Immunophenotyping", 
+#                            legend.labs = c("Inflamed", "Excluded", "Desert"), 
+#                            conf.int = F,          # Add confidence interval
+#                            pval = FALSE,              # Add p-value
+#                            risk.table = TRUE,  title = "OS for Atezolizumab by Manual method", ggtheme=custom_theme(),
+#                            surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(os_months, 1-os_cnsr) ~ Final.call, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_manual)[,2]
+# 
+# p_manual_A_OS$plot <- p_manual_A_OS$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 3, fontface=1)
+# 
+# print(p_manual_A_OS)
+
+
+
+p_cutoff_A_OS = surv_plot(fit_cutoff, data = A_dat, time = "os_months", cen = "1-os_cnsr", method = "cutoff", title = "OS for Atezolizumab by \nDensity cut-off method",
+                            hjust1 = -2, hjust2 = -0.5, hjust3 = 0)
+# p_cutoff_A_OS = ggsurvplot(fit_cutoff, data = A_dat, palette = COLOR, size = 2, 
+#                            font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                            legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                            conf.int = F,          # Add confidence interval
+#                            pval = FALSE,              # Add p-value
+#                            risk.table = TRUE,  title = "OS for Atezolizumab by Density cut-off method", ggtheme=custom_theme(),
+#                            surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(os_months, 1-os_cnsr) ~ cutoff, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_cutoff)[,2]
+# 
+# p_cutoff_A_OS$plot <- p_cutoff_A_OS$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 3, fontface=1)
+# 
+# print(p_cutoff_A_OS)
+
+
+
+p_SVM_A_OS = surv_plot(fit_SVM, data = A_dat, time = "os_months", cen = "1-os_cnsr", method = "cutoff", title = "OS for Atezolizumab by \nBinned CD8 density method",
+                            hjust1 = -2, hjust2 = -0.5, hjust3 = 0)
+# p_SVM_A_OS = ggsurvplot(fit_SVM, data = A_dat, palette = COLOR, size = 2, 
+#                         font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                         legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                         conf.int = F,          # Add confidence interval
+#                         pval = FALSE,              # Add p-value
+#                         risk.table = TRUE,  title = "OS for Atezolizumab by Binned CD8 density method", ggtheme=custom_theme(),
+#                         surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(os_months, 1-os_cnsr) ~ SVM, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_SVM)[,2]
+# 
+# p_SVM_A_OS$plot <- p_SVM_A_OS$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 3, fontface=1)
+# 
+# print(p_SVM_A_OS)
+
+
+
+
+## Placebo arm
+fit_spat <- survfit(Surv(os_months, 1-os_cnsr) ~ spat, data = D_dat)
+fit_manual <- survfit(Surv(os_months, 1-os_cnsr) ~ Final.call, data = D_dat)
+fit_cutoff <- survfit(Surv(os_months, 1-os_cnsr) ~ cutoff, data = D_dat)
+fit_SVM <- survfit(Surv(os_months, 1-os_cnsr) ~ SVM, data = D_dat)
+
+
+p_spat_D_OS = surv_plot(fit_spat, data = D_dat, time = "os_months", cen = "1-os_cnsr", method = "spat", title = "OS for Placebo by \nMOCHA method",
+                            hjust1 = 0.5, hjust2 = -0.5, hjust3 = -2.5)
+# p_spat_D_OS = ggsurvplot(fit_spat, data = D_dat, palette = COLOR, size = 2, 
+#                          font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                          legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                          conf.int = F,          # Add confidence interval
+#                          pval = FALSE,              # Add p-value
+#                          risk.table = TRUE,  title = "OS for Placebo by MOCHA method", ggtheme=custom_theme(),
+#                          surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(os_months, 1-os_cnsr) ~ spat, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_spat)[,2]
+# 
+# p_spat_D_OS$plot <- p_spat_D_OS$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = 3, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[3], vjust=0, hjust = 0.5, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[2], vjust=0, hjust = -1, fontface=1)
+# 
+# print(p_spat_D_OS)
+
+
+
+p_manual_D_OS = surv_plot(fit_manual, data = D_dat, time = "os_months", cen = "1-os_cnsr", method = "Final.call", title = "OS for Placebo by \nManual method",
+                            hjust1 = 0.5, hjust2 = -0.5, hjust3 = -2.5)
+# p_manual_D_OS = ggsurvplot(fit_manual, data = D_dat, palette = COLOR, size = 2, 
+#                            font.main = c(16, "bold"), legend.title = "Immunophenotyping", 
+#                            legend.labs = c("Inflamed", "Excluded", "Desert"), 
+#                            conf.int = F,          # Add confidence interval
+#                            pval = FALSE,              # Add p-value
+#                            risk.table = TRUE,  title = "OS for Placebo by Manual method", ggtheme=custom_theme(),
+#                            surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(os_months, 1-os_cnsr) ~ Final.call, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_manual)[,2]
+# 
+# p_manual_D_OS$plot <- p_manual_D_OS$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = 3, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = -1, fontface=1)
+# 
+# print(p_manual_D_OS)
+
+
+
+p_cutoff_D_OS = surv_plot(fit_cutoff, data = D_dat, time = "os_months", cen = "1-os_cnsr", method = "cutoff", title = "OS for Placebo by \nDensity cut-off method",
+                            hjust1 = 0.5, hjust2 = -0.5, hjust3 = -2.5)
+# p_cutoff_D_OS = ggsurvplot(fit_cutoff, data = D_dat, palette = COLOR, size = 2, 
+#                            font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                            legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                            conf.int = F,          # Add confidence interval
+#                            pval = FALSE,              # Add p-value
+#                            risk.table = TRUE,  title = "OS for Placebo by Density cut-off method", ggtheme=custom_theme(),
+#                            surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(os_months, 1-os_cnsr) ~ cutoff, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_cutoff)[,2]
+# 
+# p_cutoff_D_OS$plot <- p_cutoff_D_OS$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = 3, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[3], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0.5, fontface=1)
+# 
+# print(p_cutoff_D_OS)
+
+
+
+p_SVM_D_OS = surv_plot(fit_SVM, data = D_dat, time = "os_months", cen = "1-os_cnsr", method = "SVM", title = "OS for Placebo by \nBinned CD8 density method",
+                            hjust1 = 0.5, hjust2 = -0.5, hjust3 = -2.5)
+# p_SVM_D_OS = ggsurvplot(fit_SVM, data = D_dat, palette = COLOR, size = 2, 
+#                         font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                         legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                         conf.int = F,          # Add confidence interval
+#                         pval = FALSE,              # Add p-value
+#                         risk.table = TRUE,  title = "OS for Placebo by Binned CD8 density method", ggtheme=custom_theme(),
+#                         surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(os_months, 1-os_cnsr) ~ SVM, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_SVM)[,2]
+# 
+# p_SVM_D_OS$plot <- p_SVM_D_OS$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = 3, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = -1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 0.5, fontface=1)
+# 
+# print(p_SVM_D_OS)
+
+
+```
+
+
+
+
+# PFS Survival analysis (IMPassion130)
+```{r}
+
+#######################################################################################################
+########################            PFS for spat and Manuals         ########################
+#######################################################################################################
+
+## Atezo arm
+fit_spat <- survfit(Surv(pfs_months, 1-pfs_cnsr) ~ spat, data = A_dat)
+fit_manual <- survfit(Surv(pfs_months, 1-pfs_cnsr) ~ Final.call, data = A_dat)
+fit_cutoff <- survfit(Surv(pfs_months, 1-pfs_cnsr) ~ cutoff, data = A_dat)
+fit_SVM <- survfit(Surv(pfs_months, 1-pfs_cnsr) ~ SVM, data = A_dat)
+
+
+p_spat_A_pfs = surv_plot(fit_spat, data = A_dat, time = "pfs_months", cen = "1-pfs_cnsr", method = "spat", title = "PFS for Atezolizumab by \nMOCHA method",
+                            hjust1 = -5.5, hjust2 = -1, hjust3 = 0)
+# p_spat_A_pfs = ggsurvplot(fit_spat, data = A_dat, palette = COLOR, size = 2, 
+#                           font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                           legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                           conf.int = F,          # Add confidence interval
+#                           pval = FALSE,              # Add p-value
+#                           risk.table = TRUE,  title = "PFS for Atezolizumab by MOCHA method", ggtheme=custom_theme(),
+#                           surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(pfs_months, 1-pfs_cnsr) ~ spat, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_spat)[,2]
+# 
+# p_spat_A_pfs$plot <- p_spat_A_pfs$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -2.5, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = 0, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 2.5, fontface=1)
+# 
+# print(p_spat_A_pfs)
+
+
+
+p_manual_A_pfs = surv_plot(fit_manual, data = A_dat, time = "pfs_months", cen = "1-pfs_cnsr", method = "Final.call", title = "PFS for Atezolizumab by \nManual method",
+                            hjust1 = -3.5, hjust2 = -1, hjust3 = 0)
+# p_manual_A_pfs = ggsurvplot(fit_manual, data = A_dat, palette = COLOR, size = 2, 
+#                             font.main = c(16, "bold"), legend.title = "Immunophenotyping", 
+#                             legend.labs = c("Inflamed", "Excluded", "Desert"), 
+#                             conf.int = F,          # Add confidence interval
+#                             pval = FALSE,              # Add p-value
+#                             risk.table = TRUE,  title = "PFS for Atezolizumab by Manual method", ggtheme=custom_theme(),
+#                             surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(pfs_months, 1-pfs_cnsr) ~ Final.call, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_manual)[,2]
+# 
+# p_manual_A_pfs$plot <- p_manual_A_pfs$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -1.5, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = -0.5, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 2, fontface=1)
+# 
+# print(p_manual_A_pfs)
+
+
+
+p_cutoff_A_pfs = surv_plot(fit_cutoff, data = A_dat, time = "pfs_months", cen = "1-pfs_cnsr", method = "cutoff", title = "PFS for Atezolizumab by \nDensity cut-off method",
+                            hjust1 = -3.5, hjust2 = -1, hjust3 = 0)
+# p_cutoff_A_pfs = ggsurvplot(fit_cutoff, data = A_dat, palette = COLOR, size = 2, 
+#                             font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                             legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                             conf.int = F,          # Add confidence interval
+#                             pval = FALSE,              # Add p-value
+#                             risk.table = TRUE,  title = "PFS for Atezolizumab by Density cut-off method", ggtheme=custom_theme(),
+#                             surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(pfs_months, 1-pfs_cnsr) ~ cutoff, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_cutoff)[,2]
+# 
+# p_cutoff_A_pfs$plot <- p_cutoff_A_pfs$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -1.5, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = -0.5, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 2, fontface=1)
+# 
+# print(p_cutoff_A_pfs)
+
+
+
+p_SVM_A_pfs = surv_plot(fit_SVM, data = A_dat, time = "pfs_months", cen = "1-pfs_cnsr", method = "SVM", title = "PFS for Atezolizumab by \nBinned CD8 density method",
+                            hjust1 = -3.5, hjust2 = -1, hjust3 = 0)
+# p_SVM_A_pfs = ggsurvplot(fit_SVM, data = A_dat, palette = COLOR, size = 2, 
+#                          font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                          legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                          conf.int = F,          # Add confidence interval
+#                          pval = FALSE,              # Add p-value
+#                          risk.table = TRUE,  title = "PFS for Atezolizumab by Binned CD8 density method", ggtheme=custom_theme(),
+#                          surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(pfs_months, 1-pfs_cnsr) ~ SVM, data = A_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_SVM)[,2]
+# 
+# p_SVM_A_pfs$plot <- p_SVM_A_pfs$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = -1.5, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = -0.5, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = 2, fontface=1)
+# 
+# print(p_SVM_A_pfs)
+
+
+
+
+
+
+## Placebo arm
+fit_spat <- survfit(Surv(pfs_months, 1-pfs_cnsr) ~ spat, data = D_dat)
+fit_manual <- survfit(Surv(pfs_months, 1-pfs_cnsr) ~ Final.call, data = D_dat)
+fit_cutoff <- survfit(Surv(pfs_months, 1-pfs_cnsr) ~ cutoff, data = D_dat)
+fit_SVM <- survfit(Surv(pfs_months, 1-pfs_cnsr) ~ SVM, data = D_dat)
+
+
+
+p_spat_D_pfs = surv_plot(fit_spat, data = D_dat, time = "pfs_months", cen = "1-pfs_cnsr", method = "spat", title = "PFS for Placebo by \nMOCHA method",
+                            hjust1 = 0, hjust2 = -1, hjust3 = -3)
+# p_spat_D_pfs = ggsurvplot(fit_spat, data = D_dat, palette = COLOR, size = 2, 
+#                           font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                           legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                           conf.int = F,          # Add confidence interval
+#                           pval = FALSE,              # Add p-value
+#                           risk.table = TRUE,  title = "PFS for Placebo by MOCHA method", ggtheme=custom_theme(),
+#                           surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(pfs_months, 1-pfs_cnsr) ~ spat, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_spat)[,2]
+# 
+# p_spat_D_pfs$plot <- p_spat_D_pfs$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = 2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = -0.5, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = -2, fontface=1)
+# 
+# print(p_spat_D_pfs)
+
+
+
+p_manual_D_pfs = surv_plot(fit_manual, data = D_dat, time = "pfs_months", cen = "1-pfs_cnsr", method = "Final.call", title = "PFS for Placebo by \nManual method",
+                            hjust1 = 0, hjust2 = -1, hjust3 = -3)
+# p_manual_D_pfs = ggsurvplot(fit_manual, data = D_dat, palette = COLOR, size = 2, 
+#                             font.main = c(16, "bold"), legend.title = "Immunophenotyping", 
+#                             legend.labs = c("Inflamed", "Excluded", "Desert"), 
+#                             conf.int = F,          # Add confidence interval
+#                             pval = FALSE,              # Add p-value
+#                             risk.table = TRUE,  title = "PFS for Placebo by Manual method", ggtheme=custom_theme(),
+#                             surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(pfs_months, 1-pfs_cnsr) ~ Final.call, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_manual)[,2]
+# 
+# p_manual_D_pfs$plot <- p_manual_D_pfs$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = 2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = -0.5, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = -2, fontface=1)
+# 
+# print(p_manual_D_pfs)
+
+
+
+p_cutoff_D_pfs = surv_plot(fit_cutoff, data = D_dat, time = "pfs_months", cen = "1-pfs_cnsr", method = "cutoff", title = "PFS for Placebo by \nDensity cut-off method",
+                            hjust1 = 0, hjust2 = -1, hjust3 = -3)
+# p_cutoff_D_pfs = ggsurvplot(fit_cutoff, data = D_dat, palette = COLOR, size = 2, 
+#                             font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                             legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                             conf.int = F,          # Add confidence interval
+#                             pval = FALSE,              # Add p-value
+#                             risk.table = TRUE,  title = "PFS for Placebo by Density cut-off method", ggtheme=custom_theme(),
+#                             surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(pfs_months, 1-pfs_cnsr) ~ cutoff, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_cutoff)[,2]
+# 
+# p_cutoff_D_pfs$plot <- p_cutoff_D_pfs$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = 2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[3], vjust=0, hjust = -2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[2], vjust=0, hjust = -0.5, fontface=1)
+# 
+# print(p_cutoff_D_pfs)
+
+
+
+p_SVM_D_pfs = surv_plot(fit_SVM, data = D_dat, time = "pfs_months", cen = "1-pfs_cnsr", method = "SVM", title = "PFS for Placebo by \nBinned CD8 density method",
+                            hjust1 = 0, hjust2 = -1, hjust3 = -3)
+# p_SVM_D_pfs = ggsurvplot(fit_SVM, data = D_dat, palette = COLOR, size = 2, 
+#                          font.main = c(16, "bold"), legend.title = "Immunophenotyping",
+#                          legend.labs = c("Inflamed", "Excluded", "Desert"),
+#                          conf.int = F,          # Add confidence interval
+#                          pval = FALSE,              # Add p-value
+#                          risk.table = TRUE,  title = "PFS for Placebo by Binned CD8 density method", ggtheme=custom_theme(),
+#                          surv.median.line = "hv", tables.theme = theme_cleantable(), axes.offset = F)
+# 
+# p_val = survdiff(Surv(pfs_months, 1-pfs_cnsr) ~ SVM, data = D_dat)
+# p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
+# 
+# med_time = surv_median(fit_SVM)[,2]
+# 
+# p_SVM_D_pfs$plot <- p_SVM_D_pfs$plot +
+#   annotate("text", size = 5, x = 40, y = 0.8, label = paste0("p=", p_val), cex=4, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[1], y = 0.65, label = round(med_time[1], 1), cex=4, col=COLOR[1], vjust=0, hjust = 2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[2], y = 0.65, label = round(med_time[2], 1), cex=4, col=COLOR[2], vjust=0, hjust = -2, fontface=1) + 
+#   annotate("text", size = 5, x = med_time[3], y = 0.65, label = round(med_time[3], 1), cex=4, col=COLOR[3], vjust=0, hjust = -0.5, fontface=1)
+# 
+# print(p_SVM_D_pfs)
+
+
+```
+
+
+```{r}
+
+splots <- list()
+splots[[1]] <- p_cutoff_A_OS
+splots[[2]] <- p_SVM_A_OS
+splots[[3]] <- p_spat_A_OS
+splots[[4]] <- p_manual_A_OS
+splots[[5]] <- p_cutoff_D_OS
+splots[[6]] <- p_SVM_D_OS
+splots[[7]] <- p_spat_D_OS
+splots[[8]] <- p_manual_D_OS
+
+
+
+splots[[9]] <- p_cutoff_A_pfs
+splots[[10]] <- p_SVM_A_pfs
+splots[[11]] <- p_spat_A_pfs
+splots[[12]] <- p_manual_A_pfs
+splots[[13]] <- p_cutoff_D_pfs
+splots[[14]] <- p_SVM_D_pfs
+splots[[15]] <- p_spat_D_pfs
+splots[[16]] <- p_manual_D_pfs
+
+
+
+png("~/Automated_Immunophenotyping/JPATH/OS_comp_new_preferred_IMP130_pip1-3.png", width = 4500, height = 2200, res = 300)
+# Arrange multiple ggsurvplots and print the output
+arrange_ggsurvplots(list(splots[[1]], splots[[5]], splots[[2]], splots[[6]],
+                         splots[[3]], splots[[7]], splots[[4]], splots[[8]]), 
+                    print = TRUE, ncol = 4, nrow = 2, risk.table.height = 0.2)
+dev.off()
+
+
+png("~/Automated_Immunophenotyping/JPATH/PFS_comp_new_preferred_IMP130_pip1-3.png", width = 4500, height = 2200, res = 300)
+# Arrange multiple ggsurvplots and print the output
+arrange_ggsurvplots(list(splots[[9]], splots[[13]], splots[[10]], splots[[14]],
+                         splots[[11]], splots[[15]], splots[[12]], splots[[16]]), 
+                    print = TRUE, ncol = 4, nrow = 2, risk.table.height = 0.2)
+dev.off()
+
+
+```
+
+
+

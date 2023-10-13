@@ -69,82 +69,83 @@ def draw_stats(left_labels, right_labels, fn_out_png):
 
 
 
-def draw_distribution(df, title):
-    OAK_A_distribution = pd.DataFrame({'Density cut-off': df.cutoff.value_counts(),
-                                       "Binned CD8 density": df.SVM.value_counts(),
-                                       'MOCHA': df.spat.value_counts(),
-                                       'MOCHA-BITE': df.MOCHA.value_counts(),
-                                       'Manual': df.Manual.value_counts()
-                                       })
-    OAK_A_distribution = OAK_A_distribution.reindex(['Inflamed', 'Excluded', 'Desert'])
+# def draw_distribution(df, title):
+#     OAK_A_distribution = pd.DataFrame({'Density cut-off': df.cutoff.value_counts(),
+#                                        "Binned CD8 density": df.SVM.value_counts(),
+#                                        'MOCHA': df.spat.value_counts(),
+#                                        'MOCHA-BITE': df.MOCHA.value_counts(),
+#                                        'Manual': df.Manual.value_counts()
+#                                        })
+#     OAK_A_distribution = OAK_A_distribution.reindex(['Inflamed', 'Excluded', 'Desert'])
 
-    OAK_A_distribution = OAK_A_distribution.T
+#     OAK_A_distribution = OAK_A_distribution.T
     
-    plt.subplots_adjust(left = 0.2)
-    OAK_A_distribution.plot(kind='bar', stacked=True, color = colors, rot=270, fontsize = 20).legend(loc='center left',bbox_to_anchor=(1, 0.5))
-    plt.savefig('/Users/lix233/gRED_DP_OAK/' + title + '_all_pred_distribution.png', dpi = 300, bbox_inches = "tight")
-    
-    
+#     plt.subplots_adjust(left = 0.2)
+#     OAK_A_distribution.plot(kind='bar', stacked=True, color = colors, rot=270, fontsize = 20).legend(loc='center left',bbox_to_anchor=(1, 0.5))
+#     plt.savefig('/Users/lix233/Automated_Immunophenotyping/JPATH/' + title + '_all_pred_distribution.png', dpi = 300, bbox_inches = "tight")
     
     
-fn_in = '/Users/lix233/gRED_DP_OAK/pip1_4_pred_OAK.csv'
-
-    
-data = pd.read_csv(fn_in)    
     
     
-manual_IP = data.Manual.to_numpy()
-cutoff_pred = data.cutoff.to_numpy()
-SVM_pred = data.SVM.to_numpy()
-spat_pred = data.spat.to_numpy()
-MOCHA_pred = data.MOCHA.to_numpy()
-
-
-
-draw_stats(manual_IP, cutoff_pred, '/Users/lix233/gRED_DP_OAK/OAK_manual_IP_vs_cutoff_predict.png')
-draw_stats(manual_IP, SVM_pred, '/Users/lix233/gRED_DP_OAK/OAK_manual_IP_vs_SVM_predict.png')
-draw_stats(manual_IP, spat_pred, '/Users/lix233/gRED_DP_OAK/OAK_manual_IP_vs_spat.png')
-draw_stats(manual_IP, MOCHA_pred, '/Users/lix233/gRED_DP_OAK/OAK_manual_IP_vs_MOCHA.png')
-
-
-A_data = data.loc[data.ACTARM == 'atezo']
-D_data = data.loc[data.ACTARM == 'doce']
-
-
-draw_distribution(A_data, 'OAK_A')
-draw_distribution(D_data, 'OAK_D')
-
-
-
-
-
-
-fn_in = '/Users/lix233/gRED_DP_OAK/pip1_4_pred_IMP130.csv'
+fn_in = '/Users/lix233/Automated_Immunophenotyping/JPATH/pip1_4_pred_OAK.csv'
 
     
 data = pd.read_csv(fn_in)    
     
     
-manual_IP = data.Manual.to_numpy()
-cutoff_pred = data.cutoff.to_numpy()
-SVM_pred = data.SVM.to_numpy()
-spat_pred = data.spat.to_numpy()
-MOCHA_pred = data.MOCHA.to_numpy()
+manual_IP = data.Manual_IP.to_numpy()
+cutoff_pred = data.Density_cutoff.to_numpy()
+SVM_pred = data.Binned_CD8_density.to_numpy()
+spat_pred = data.MOCHA.to_numpy()
+MOCHA_pred = data.MOCHA_BITE.to_numpy()
 
 
 
-draw_stats(manual_IP, cutoff_pred.astype(str), '/Users/lix233/gRED_DP_OAK/IMP130_manual_IP_vs_cutoff_predict.png')
-draw_stats(manual_IP, SVM_pred.astype(str), '/Users/lix233/gRED_DP_OAK/IMP130_manual_IP_vs_SVM_predict.png')
-draw_stats(manual_IP, spat_pred, '/Users/lix233/gRED_DP_OAK/IMP130_manual_IP_vs_spat.png')
-draw_stats(manual_IP, MOCHA_pred, '/Users/lix233/gRED_DP_OAK/IMP130_manual_IP_vs_MOCHA.png')
+draw_stats(manual_IP, cutoff_pred, '/Users/lix233/Automated_Immunophenotyping/JPATH/OAK_manual_IP_vs_PIP1_predict.png')
+draw_stats(manual_IP, SVM_pred, '/Users/lix233/Automated_Immunophenotyping/JPATH/OAK_manual_IP_vs_PIP2_predict.png')
+draw_stats(manual_IP, spat_pred, '/Users/lix233/Automated_Immunophenotyping/JPATH/OAK_manual_IP_vs_PIP3_predict.png')
+draw_stats(manual_IP, MOCHA_pred, '/Users/lix233/Automated_Immunophenotyping/JPATH/OAK_manual_IP_vs_PIP4_predict.png')
 
 
-A_data = data.loc[data.ACTARM == 'MPDL3280A']
-D_data = data.loc[data.ACTARM == 'PLACEBO']
+# A_data = data.loc[data.ACTARM == 'atezo']
+# D_data = data.loc[data.ACTARM == 'doce']
 
 
-draw_distribution(A_data, 'IMP130_A')
-draw_distribution(D_data, 'IMP130_D')
+# draw_distribution(A_data, 'OAK_A')
+# draw_distribution(D_data, 'OAK_D')
+
+
+
+
+
+
+fn_in = '/Users/lix233/Automated_Immunophenotyping/JPATH/pip1_4_pred_IMP130.csv'
+
+    
+data = pd.read_csv(fn_in)    
+    
+    
+manual_IP = data.Manual_IP.to_numpy()
+cutoff_pred = data.Density_cutoff.to_numpy()
+SVM_pred = data.Binned_CD8_density.to_numpy()
+spat_pred = data.MOCHA.to_numpy()
+MOCHA_pred = data.MOCHA_BITE.to_numpy()
+
+
+
+
+draw_stats(manual_IP, cutoff_pred, '/Users/lix233/Automated_Immunophenotyping/JPATH/IMP130_manual_IP_vs_PIP1_predict.png')
+draw_stats(manual_IP, SVM_pred, '/Users/lix233/Automated_Immunophenotyping/JPATH/IMP130_manual_IP_vs_PIP2_predict.png')
+draw_stats(manual_IP, spat_pred, '/Users/lix233/Automated_Immunophenotyping/JPATH/IMP130_manual_IP_vs_PIP3_predict.png')
+draw_stats(manual_IP, MOCHA_pred, '/Users/lix233/Automated_Immunophenotyping/JPATH/IMP130_manual_IP_vs_PIP4_predict.png')
+
+
+# A_data = data.loc[data.ACTARM == 'MPDL3280A']
+# D_data = data.loc[data.ACTARM == 'PLACEBO']
+
+
+# draw_distribution(A_data, 'IMP130_A')
+# draw_distribution(D_data, 'IMP130_D')
 
 
 

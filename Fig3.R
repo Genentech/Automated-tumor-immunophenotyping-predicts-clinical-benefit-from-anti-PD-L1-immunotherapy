@@ -206,8 +206,10 @@ umap_plot <- function(this_dat = combine_POP, fea = binned_density_fea){
     theme(panel.grid.major = element_blank(), 
           panel.grid.minor = element_blank(),
           panel.background = element_blank(), 
-          axis.line = element_line(colour = "black")) +
-    theme(legend.position="top")
+          axis.line = element_line(colour = "black"),
+          text = element_text(size=6),
+          axis.text = element_text(size=6)) +
+    theme(legend.position="none")
   
   
   
@@ -242,8 +244,10 @@ umap_plot_Kmeans <- function(this_dat = combine_POP, fea = comb_fea){
     theme(panel.grid.major = element_blank(), 
           panel.grid.minor = element_blank(),
           panel.background = element_blank(), 
-          axis.line = element_line(colour = "black")) +
-    theme(legend.position="top")
+          axis.line = element_line(colour = "black"),
+          text = element_text(size=6),
+          axis.text = element_text(size=6)) +
+    theme(legend.position="none")
   
   
   
@@ -269,8 +273,10 @@ hist_plot <-  function(this_dat = combine_POP) {
     theme(panel.grid.major = element_blank(), 
           panel.grid.minor = element_blank(),
           panel.background = element_blank(), 
-          axis.line = element_line(colour = "black")) +
-    theme(legend.position="top")
+          axis.line = element_line(colour = "black"),
+          text = element_text(size=6),
+          axis.text = element_text(size=6)) +
+    theme(legend.position="none")
   
   return(this_fig)
 }
@@ -311,7 +317,7 @@ umap_IMP130_Kmeans = umap_plot_Kmeans(this_dat = combine_IMP130, fea = comb_fea)
 
 library("gridExtra")
 
-png("~/Automated_Immunophenotyping/JPATH/Fig3_new.png", width = 5000, height = 6000, res = 300)
+png("~/Automated_Immunophenotyping/JPATH/Fig3_new.png", width = 17, height = 20, res = 300, units = "cm")
 # Arrange multiple ggplots and print the output
 fig3 = grid.arrange(hist_POP, umap_POP_bin, umap_POP_spat, umap_POP_comb,
                     hist_OAK, umap_OAK_bin, umap_OAK_spat, umap_OAK_comb,
@@ -322,5 +328,6 @@ fig3 = grid.arrange(hist_POP, umap_POP_bin, umap_POP_spat, umap_POP_comb,
 print(fig3)
 
 dev.off()
+
 
 

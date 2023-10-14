@@ -251,11 +251,11 @@ surv_plot <- function(fit_obj = fit_combined, data = A_dat, time = "OS_MONTHS", 
                                conf.int = F,          # Add confidence interval
                                pval = FALSE,              # Add p-value
                                risk.table = TRUE,  
-                               risk.table.fontsize = 1.6,
+                               risk.table.fontsize = 2.5,
                                title = title, 
                                ggtheme=custom_theme(),
-                               font.x = 7,
-                               font.y = 7,
+                               font.x = 9,
+                               font.y = 9,
                                font.tickslab = 5,
                                surv.median.line = "hv", 
                                tables.theme = theme_cleantable(), 
@@ -332,9 +332,13 @@ p_combined_A_OS = surv_plot(fit_obj = fit_combined, data = A_dat, time = "OS_MON
 # print(p_combined_A_OS)
 
 
-
 p_manual_A_OS = surv_plot(fit_obj = fit_manual, data = A_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "Final.call", title = "OS for Atezolizumab by \nManual method", 
                           hjust1 = 0.2, hjust2 = 1, hjust3 = 0)
+
+png('~/Automated_Immunophenotyping/JPATH/Fig1_C1.png', width = 1000, height = 1000, res = 300)
+surv_plot(fit_obj = fit_manual, data = A_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "Final.call", title = "OS for Atezolizumab by \nManual method", hjust1 = -1.5, hjust2 = -0.5, hjust3 = 0)
+dev.off()
+
 # p_manual_A_OS = ggsurvplot(fit_manual, data = A_dat, palette = COLOR, size = 2, 
 #                 font.main = c(18, "bold"), legend.title = "Immunophenotyping", 
 #                 legend.labs = c("Inflamed", "Excluded", "Desert"), 
@@ -677,6 +681,10 @@ p_comb_A_OS = surv_plot(fit_obj = fit_combined, data = A_dat, time = "os_months"
 
 p_manual_A_OS = surv_plot(fit_obj = fit_manual, data = A_dat, time = "os_months", cen = "1-os_cnsr", method = "Final.call", title = "OS for Atezolizumab by \nManual method", 
                           hjust1 = -1, hjust2 = 0.5, hjust3 = 0)
+
+png('~/Automated_Immunophenotyping/JPATH/Fig1_C2.png', width = 1000, height = 1000, res = 300)
+p_manual_A_OS
+dev.off()
 # p_manual_A_OS = ggsurvplot(fit_manual, data = A_dat, palette = COLOR, size = 2, 
 #                 font.main = c(18, "bold"), legend.title = "Immunophenotyping", 
 #                 legend.labs = c("Inflamed", "Excluded", "Desert"), 

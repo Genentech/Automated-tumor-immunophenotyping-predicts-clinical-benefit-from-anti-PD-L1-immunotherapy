@@ -298,6 +298,7 @@ combine_OAK = combine_OAK[complete.cases(combine_OAK), ] %>% unique()
 
 
 
+
 ```{r}
 ## replace SVM results with the RF_pip2 prediction
 load('~/Automated_Immunophenotyping/JPATH/pop_trn_model_pip2_tuneRF.RData')
@@ -418,6 +419,48 @@ pip1_3_pred_OAK = data.frame("ID" = combine_OAK %>% select(ID), "ACTARM" = combi
 
 write.csv(pip1_3_pred_OAK, '~/Automated_Immunophenotyping/JPATH/pip1_3_pred_OAK.csv', row.names = F)
 ```
+
+
+
+```{r}
+## for pipeline 1, Density cut-off
+
+
+cm <- as.matrix(confusionMatrix(combine_OAK$cutoff, combine_OAK$Final.call))
+n = sum(cm) # number of instances
+nc = nrow(cm) # number of classes
+rowsums = apply(cm, 1, sum) # number of instances per class
+colsums = apply(cm, 2, sum) # number of predictions per class
+diag = diag(cm)  # number of correctly classified instances per class 
+
+precision = diag / colsums 
+recall = diag / rowsums 
+f1 = 2 * precision * recall / (precision + recall) 
+
+print(" ************ Confusion Matrix ************")
+print(cm)
+print(" ************ Diag ************")
+print(diag)
+print(" ************ Accuracy ************")
+print(sum(diag)/sum(cm))
+print(" ************ Precision/Recall/F1 ************")
+print(data.frame(precision, recall, f1)) 
+
+macroPrecision = mean(precision)
+macroRecall = mean(recall)
+macroF1 = mean(f1)
+
+print(" ************ Macro Precision/Recall/F1 ************")
+print(data.frame(macroPrecision, macroRecall, macroF1)) 
+
+
+
+
+```
+
+
+
+
 
 
 ```{r}
@@ -1020,6 +1063,36 @@ write.csv(pip1_3_pred_IMP130, '~/Automated_Immunophenotyping/JPATH/pip1_3_pred_I
 ```
 
 
+```{r}
+## for pipeline 1, Density cut-off
+cm <- as.matrix(confusionMatrix(dat_IMP130$cutoff, dat_IMP130$Final.call))
+n = sum(cm) # number of instances
+nc = nrow(cm) # number of classes
+rowsums = apply(cm, 1, sum) # number of instances per class
+colsums = apply(cm, 2, sum) # number of predictions per class
+diag = diag(cm)  # number of correctly classified instances per class 
+
+precision = diag / colsums 
+recall = diag / rowsums 
+f1 = 2 * precision * recall / (precision + recall) 
+
+print(" ************ Confusion Matrix ************")
+print(cm)
+print(" ************ Diag ************")
+print(diag)
+print(" ************ Accuracy ************")
+print(sum(diag)/sum(cm))
+print(" ************ Precision/Recall/F1 ************")
+print(data.frame(precision, recall, f1)) 
+
+macroPrecision = mean(precision)
+macroRecall = mean(recall)
+macroF1 = mean(f1)
+
+print(" ************ Macro Precision/Recall/F1 ************")
+print(data.frame(macroPrecision, macroRecall, macroF1)) 
+
+```
 
 
 # OS Survival analysis (IMPassion130)

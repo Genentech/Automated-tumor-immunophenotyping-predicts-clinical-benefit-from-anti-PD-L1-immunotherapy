@@ -243,28 +243,29 @@ surv_plot <- function(fit_obj = fit_combined, data = A_dat, time = "OS_MONTHS", 
   
   p_combined_A_OS = ggsurvplot(fit_obj, data = data, palette = COLOR, 
                                size = 0.4, 
-                               censor.size = 2.5,
-                               font.main = c(8, "bold"), 
+                               censor.size = 3.75,
+                               font.main = c(10, "bold"), 
                                legend.title = "Immunophenotyping",
                                legend.labs = c("Inflamed", "Excluded", "Desert"),
                                font.legend = 6,
                                conf.int = F,          # Add confidence interval
                                pval = FALSE,              # Add p-value
                                risk.table = TRUE,  
-                               risk.table.fontsize = 2.5,
+                               risk.table.fontsize = 2.8,
+                               risk.table.height = 0.3,
                                title = title, 
                                ggtheme=custom_theme(),
                                font.x = 9,
                                font.y = 9,
-                               font.tickslab = 5,
+                               font.tickslab = 9,
                                surv.median.line = "hv", 
                                tables.theme = theme_cleantable(), 
                                axes.offset = F, 
                                xlim = c(0, ceiling(max(data[[time]]))))
 
   p_combined_A_OS$table <- p_combined_A_OS$table +
-                              theme(plot.title = element_text(size = 7, face = "bold"))
-  p_combined_A_OS$table$theme$axis.text.y$size = 6
+                              theme(plot.title = element_text(size = 6, face = "bold"))
+  p_combined_A_OS$table$theme$axis.text.y$size = 8.75
 
   p_val = survdiff(as.formula(paste0("Surv(", time, "," , cen, ") ~ " , method)), data = data)
   p_val = round(pchisq(q = p_val$chisq, df = 2, lower.tail = F), 5)
@@ -272,10 +273,10 @@ surv_plot <- function(fit_obj = fit_combined, data = A_dat, time = "OS_MONTHS", 
   med_time = surv_median(fit_obj)[,2]
   
   p_combined_A_OS$plot <- p_combined_A_OS$plot +
-    annotate("text", size = 2.5, x = 0.8*max(data[[time]]), y = 0.6, label = paste0("p=", p_val), cex=5, col="black", vjust=0, hjust = 1.1, fontface=1) + 
-    annotate("text", size = 2.5, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=5, col=COLOR[1], vjust=0, hjust = hjust1, fontface=1) + 
-    annotate("text", size = 2.5, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=5, col=COLOR[2], vjust=0, hjust = hjust2, fontface=1) + 
-    annotate("text", size = 2.5, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=5, col=COLOR[3], vjust=0, hjust = hjust3, fontface=1)
+    annotate("text", size = 3.25, x = 0.8*max(data[[time]]), y = 0.6, label = paste0("p=", p_val), cex=5, col="black", vjust=0, hjust = 1.1, fontface=1) + 
+    annotate("text", size = 3.25, x = med_time[1], y = 0.8, label = round(med_time[1], 1), cex=5, col=COLOR[1], vjust=0, hjust = hjust1, fontface=1) + 
+    annotate("text", size = 3.25, x = med_time[2], y = 0.8, label = round(med_time[2], 1), cex=5, col=COLOR[2], vjust=0, hjust = hjust2, fontface=1) + 
+    annotate("text", size = 3.25, x = med_time[3], y = 0.8, label = round(med_time[3], 1), cex=5, col=COLOR[3], vjust=0, hjust = hjust3, fontface=1)
   
   return(p_combined_A_OS)
   
@@ -333,7 +334,7 @@ p_combined_A_OS = surv_plot(fit_obj = fit_combined, data = A_dat, time = "OS_MON
 
 
 p_manual_A_OS = surv_plot(fit_obj = fit_manual, data = A_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "Final.call", title = "OS for Atezolizumab by \nManual method", 
-                          hjust1 = 0.2, hjust2 = 1, hjust3 = 0)
+                          hjust1 = -2, hjust2 = -1, hjust3 = 0)
 
 png('~/Automated_Immunophenotyping/JPATH/Fig1_C1.png', width = 1000, height = 1000, res = 300)
 surv_plot(fit_obj = fit_manual, data = A_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "Final.call", title = "OS for Atezolizumab by \nManual method", hjust1 = -1.5, hjust2 = -0.5, hjust3 = 0)
@@ -371,7 +372,7 @@ fit_manual <- survfit(Surv(OS_MONTHS, OS_CENSOR) ~ Final.call, data = D_dat)
 
 
 p_combined_D_OS = surv_plot(fit_obj = fit_combined, data = D_dat, time = "OS_MONTHS", cen = "OS_CENSOR", method = "combined", title = "OS for Docetaxel by \nMOCHA-BITE method", 
-                          hjust1 = 1, hjust2 = -2, hjust3 = 2)
+                          hjust1 = -2, hjust2 = -1, hjust3 = 0)
 # p_combined_D_OS = ggsurvplot(fit_combined, data = D_dat, palette = COLOR, size = 2, 
 #                              font.main = c(18, "bold"), legend.title = "Immunophenotyping",
 #                              legend.labs = c("Inflamed", "Excluded", "Desert"),
@@ -680,7 +681,7 @@ p_comb_A_OS = surv_plot(fit_obj = fit_combined, data = A_dat, time = "os_months"
 
 
 p_manual_A_OS = surv_plot(fit_obj = fit_manual, data = A_dat, time = "os_months", cen = "1-os_cnsr", method = "Final.call", title = "OS for Atezolizumab by \nManual method", 
-                          hjust1 = -1, hjust2 = 0.5, hjust3 = 0)
+                          hjust1 = -1, hjust2 = -0.5, hjust3 = 0)
 
 png('~/Automated_Immunophenotyping/JPATH/Fig1_C2.png', width = 1000, height = 1000, res = 300)
 p_manual_A_OS
@@ -716,7 +717,7 @@ fit_manual <- survfit(Surv(os_months, 1-os_cnsr) ~ Final.call, data = D_dat)
 
 
 p_comb_D_OS = surv_plot(fit_obj = fit_combined, data = D_dat, time = "os_months", cen = "1-os_cnsr", method = "combined", title = "OS for Placebo by \nMOCHA-BITE method", 
-                          hjust1 = 1.8, hjust2 = 0.5, hjust3 = -1.5)
+                          hjust1 = 1.5, hjust2 = 0.5, hjust3 = -1.5)
 # p_comb_D_OS = ggsurvplot(fit_combined, data = D_dat, palette = COLOR, size = 2, 
 #                 font.main = c(18, "bold"), legend.title = "Immunophenotyping",
 #                 legend.labs = c("Inflamed", "Excluded", "Desert"),
@@ -740,7 +741,7 @@ p_comb_D_OS = surv_plot(fit_obj = fit_combined, data = D_dat, time = "os_months"
 
 
 p_manual_D_OS = surv_plot(fit_obj = fit_manual, data = D_dat, time = "os_months", cen = "1-os_cnsr", method = "Final.call", title = "OS for Placebo by \nManual method", 
-                          hjust1 = 1.8, hjust2 = 0, hjust3 = -2)
+                          hjust1 = 1.5, hjust2 = 0, hjust3 = -2)
 # p_manual_D_OS = ggsurvplot(fit_manual, data = D_dat, palette = COLOR, size = 2, 
 #                 font.main = c(18, "bold"), legend.title = "Immunophenotyping", 
 #                 legend.labs = c("Inflamed", "Excluded", "Desert"), 

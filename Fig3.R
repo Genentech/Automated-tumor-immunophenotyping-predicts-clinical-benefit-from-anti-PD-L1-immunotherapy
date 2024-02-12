@@ -1,4 +1,4 @@
-# UMAP for figures 2
+# UMAP for figures 3
 rm(list = ls())
 
 library('uwot')
